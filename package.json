@@ -1,0 +1,17 @@
+{
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "puppeteer": "^13.1.3"
+  },
+  "name": "thdhrcal",
+  "description": "",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "test": "node main.js",
+    "build": "docker build -t thdhrcal ./",
+    "start": "node /app/main.js"
+  },
+  "author": "",
+  "license": "MIT"
+}
