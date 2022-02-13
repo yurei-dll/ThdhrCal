@@ -1,5 +1,7 @@
 # Specific to this project
 workDays.json
+credentials.json
+token.json
 
 # Logs
 logs
