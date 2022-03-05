@@ -1,14 +1,14 @@
 # Google API Setup Guide
 
-Google's Cloud Console can be a little overwhelming sometimes, so I created a walk-through guide on how to configure it.
+Google's Cloud Console can be a little overwhelming sometimes, so I created a walk-through guide on how to configure it. *Ironically enough, Chrome seems to be incompatible with this page sometimes, so you may need to use Edge instead*
 
 1) Visit the [Google Cloud Console](https://console.cloud.google.com/home/) and create a new project.
 
 2) Click the navigation menu in the top left corner followed by `APIs & Services`
 
-3) Click `Enable APIs and services` 
-
 ![](https://github.com/yureiTxt/ThdhrCal/blob/master/docs/api_services.png?raw=true)
+
+3) Click `Enable APIs and services` 
 
 4) Search for `Google Calendar` and enable it. Once its enabled click `Manage`
 
