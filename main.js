@@ -243,81 +243,93 @@ function finalCheck() {
 }
 
 function startUpload() {
+    let localTimezoneOffset = new Date().getTimezoneOffset() / 60;
+    let localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    let year = new Date().getFullYear();
+    var calendarId = "primary"; // just a fallback
     var queue = [];
 
     AuthClient.setCredentials(token);
     let fileData = JSON.parse(fs.readFileSync('./workDays.json', 'utf8'));
 
-    // Collect days from workDays.json without an event_id
+    // Collect days from workDays.json
     JSON.parse(fs.readFileSync('./workDays.json', 'utf8'))
         .filter(day => day.status === "pending")
         .forEach(obj => queue.push(obj));
 
-    var lastDay;
-    var queueWorker = setInterval(() => {
-        let localTimezoneOffset = new Date().getTimezoneOffset() / 60;
-        let localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        let workDay = queue.shift();
-        let year = new Date().getFullYear();
-
-        if (workDay) {
-            var dateString = workDay.date.split("/")[0] + "-" + workDay.date.split("/")[1]
-            if (workDay.date == "1/1" && lastDay == "12/31") year++;
-
-            /** Google Calendar is very picky.
-            * Using RFC3339 formatting.
-            * 
-            * {
-            *   'summary': 'Google I/O 2015',
-            *   'description': 'A chance to hear more about Google\'s developer products.',
-            *   'start': {
-            *     'dateTime': '2015-05-28T09:00:00-07:00',
-            *     'timeZone': 'America/Los_Angeles',
-            *   },
-            *   'end': {
-            *     'dateTime': '2015-05-28T17:00:00-07:00',
-            *     'timeZone': 'America/Los_Angeles',
-            *   }
-            * }
-            * 
-            */
-
-            let startTime = moment(workDay.start, "h:mm a").format("HH:mm:ss");
-            let endTime = moment(workDay.end, "h:mm a").format("HH:mm:ss");
-
-            calendar.events.insert({
-                auth: AuthClient,
-                calendarId: 'primary',
-                resource: {
-                    summary: "Shift",
-                    description: "Work schedule for " + workDay.date,
-                    // Dont bother using the Date constructor, Google hates it
-                    start: {
-                        dateTime: year + "-" + dateString + "T" + startTime,
-                        timeZone: localTimezone
-                    },
-                    end: {
-                        dateTime: year + "-" + dateString + "T" + endTime,
+    // Check calendar list for one called "Work Schedule" and create it if it doesn't exist
+    calendar.calendarList.list().then(res => {
+        console.log(res); // temp
+        var found = res.data.items.find(cal => cal.summary === "Work Schedule");
+        if (!found) {
+            calendar.calendars.insert(
+                {
+                    resource: {
+                        summary: "Work Schedule",
                         timeZone: localTimezone
                     }
                 }
-            }
-                , (err, event) => {
-                    if (err) {
-                        console.log(err);
-                        throw err
-                    }
-                    if (event.data) {
-                        console.log(workDay.date + ":" + event.data.status);
-                        fileData.find(day => day.date === workDay.date).status = event.data.status;
-                        fs.writeFileSync('./workDays.json', JSON.stringify(fileData, 4));
-                    }
-                });
-            lastDay = workDay;
+            ).then(res => {
+                console.log("Created a work calendar");
+                calendarId = res.data.id;
+            });
         } else {
-            console.log("All entries uploaded!");
-            console.log("Check your new calendar at: https://calendar.google.com/")
-            clearInterval(queueWorker);
+            // Update the calendar ID to use
+            calendarId = found.id;
         }
-    }, 1200);
+
+
+        var lastDay;
+        var queueWorker = setInterval(() => {
+            let workDay = queue.shift();
+            if (workDay) {
+                var dateString = workDay.date.split("/")[0] + "-" + workDay.date.split("/")[1]
+                if (workDay.date == "1/1" && lastDay == "12/31") year++;
+
+                /** Google Calendar is very picky.
+                * Using RFC3339 formatting.
+                */
+
+                let startTime = moment(workDay.start, "h:mm a").format("HH:mm:ss");
+                let endTime = moment(workDay.end, "h:mm a").format("HH:mm:ss");
+
+                calendar.events.insert({
+                    auth: AuthClient,
+                    calendarId: calendarId,
+                    resource: {
+                        summary: "Work",
+                        description: "Work schedule for " + workDay.date,
+                        // Dont bother using the Date constructor, Google hates it
+                        start: {
+                            dateTime: year + "-" + dateString + "T" + startTime,
+                            timeZone: localTimezone
+                        },
+                        end: {
+                            dateTime: year + "-" + dateString + "T" + endTime,
+                            timeZone: localTimezone
+                        }
+                    }
+                }
+                    , (err, event) => {
+                        if (err) {
+                            console.log(err);
+                            throw err
+                        }
+                        if (event.data) {
+                            console.log(workDay.date + ":" + event.data.status);
+                            fileData.find(day => day.date === workDay.date).status = event.data.status;
+                            fs.writeFileSync('./workDays.json', JSON.stringify(fileData, 4));
+                        }
+                    });
+                lastDay = workDay;
+            } else {
+                console.log("All entries uploaded!");
+                console.log("Check your new calendar at: https://calendar.google.com/")
+                clearInterval(queueWorker);
+            }
+        }, 1200);
+
+    });
+
+
 }
