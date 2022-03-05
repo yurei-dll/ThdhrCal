@@ -5,9 +5,11 @@ const http = require('http');
 const Google = require('googleapis');
 const moment = require('moment-timezone');
 const fs = require('fs');
+const os = require('os');
 const url = require('url');
 
 var token;
+var puppeteer_running = false;
 var work_schedule = [];
 
 var cred = require('./credentials.json');
@@ -30,7 +32,7 @@ const api_scopes = [ // Don't modify without deleting the token json file
 // See if the work schedule file is missing or outdated
 if (!fs.existsSync('./workDays.json')) { // if the file doesn't exist, create it
     fs.writeFileSync('./workDays.json', JSON.stringify(work_schedule, 4));
-    getSchedule().then(finalCheck);
+    finalCheck();
 } else {
     try {
         // First check if the last day is less than 2 weeks from now
@@ -45,7 +47,6 @@ if (!fs.existsSync('./workDays.json')) { // if the file doesn't exist, create it
             finalCheck();
         }
     } catch (err) {
-        console.log(err);
         finalCheck();
     }
 }
@@ -61,6 +62,7 @@ if (!process.env.HD_USERNAME) throw new Error("Missing HD_USERNAME environment v
 ////////////////////////////////////////////////////////////////////////////////
 
 async function getSchedule() {
+    if (puppeteer_running) return new Error("Puppeteer is already running.");
     puppeteer.launch({
         headless: false,
         // viewport has to be big enough to see the entire page
@@ -72,6 +74,8 @@ async function getSchedule() {
             "--window-size=1280,720"
         ],
     }).then(async browser => {
+        puppeteer_running = true;
+
         //set up the browser
         //set the viewport to fill the window
         const page = await browser.newPage();
@@ -146,6 +150,7 @@ async function getSchedule() {
                             // Wait until the last cell of the last row is done and then write the data to the file
                             if (j == cells.length - 1 && i == rows.length - 1) {
                                 setTimeout(() => {
+                                    puppeteer_running = false;
                                     browser.close().then(writeToFile)
                                 }, 1000)
                             }
@@ -168,7 +173,7 @@ async function getSchedule() {
                         date: day.date,
                         start: day.start,
                         end: day.end,
-                        event_id: -1
+                        status: "pending"
                     })
                 }
             });
@@ -245,7 +250,7 @@ function startUpload() {
 
     // Collect days from workDays.json without an event_id
     JSON.parse(fs.readFileSync('./workDays.json', 'utf8'))
-        .filter(day => day.event_id === -1)
+        .filter(day => day.status === "pending")
         .forEach(obj => queue.push(obj));
 
     var lastDay;
@@ -253,11 +258,11 @@ function startUpload() {
         let localTimezoneOffset = new Date().getTimezoneOffset() / 60;
         let localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
         let workDay = queue.shift();
-        var dateString = workDay.date.split("/")[0] + "-" + workDay.date.split("/")[1]
         let year = new Date().getFullYear();
-        if (workDay.date == "1/1" && lastDay == "12/31") year++;
 
         if (workDay) {
+            var dateString = workDay.date.split("/")[0] + "-" + workDay.date.split("/")[1]
+            if (workDay.date == "1/1" && lastDay == "12/31") year++;
 
             /** Google Calendar is very picky.
             * Using RFC3339 formatting.
@@ -302,10 +307,11 @@ function startUpload() {
                         console.log(err);
                         throw err
                     }
-                    console.log("Event created: " + event);
-                    // Update the event_id in the workDays.json file
-                    fileData.find(day => day.date === workDay.date).event_id = event.id;
-                    fs.writeFileSync('./workDays.json', JSON.stringify(fileData, 4));
+                    if (event.data) {
+                        console.log(workDay.date + ":" + event.data.status);
+                        fileData.find(day => day.date === workDay.date).status = event.data.status;
+                        fs.writeFileSync('./workDays.json', JSON.stringify(fileData, 4));
+                    }
                 });
             lastDay = workDay;
         } else {
