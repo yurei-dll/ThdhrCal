@@ -2,50 +2,65 @@
 
 const puppeteer = require('puppeteer');
 const http = require('http');
-const { google } = require('googleapis');
+const Google = require('googleapis');
+const moment = require('moment-timezone');
 const fs = require('fs');
 const url = require('url');
-const { oauth2 } = require('googleapis/build/src/apis/oauth2');
-const { OAuth2Client } = require('google-auth-library');
+
+var token;
+var work_schedule = [];
+
+var cred = require('./credentials.json');
+const AuthClient = new Google.Auth.OAuth2Client(
+    cred.web.client_id,
+    cred.web.client_secret,
+    cred.web.redirect_uris[0]
+);
+const calendar = new Google.calendar_v3.Calendar(
+    { auth: AuthClient }
+);
 
 require('dotenv').config();
-const destSite = "https://hdapps.homedepot.com/LaborMgtTools/WFMEssLauncher"
-
-// If modifying these scopes, delete token.json.
-const SCOPES = [
+const target_webpage = "https://hdapps.homedepot.com/LaborMgtTools/WFMEssLauncher"
+const api_scopes = [ // Don't modify without deleting the token json file
     'https://www.googleapis.com/auth/calendar'
 ];
-// The file token.json stores the user's access and refresh tokens, and is
-// created automatically when the authorization flow completes for the first
-// time.
-const TOKEN_PATH = './token.json';
 
-var workDays = [];
+
+// See if the work schedule file is missing or outdated
 if (!fs.existsSync('./workDays.json')) { // if the file doesn't exist, create it
-    fs.writeFileSync('./workDays.json', JSON.stringify(workDays, 4));
-    collectData().then(uploadScheduleInfo);
+    fs.writeFileSync('./workDays.json', JSON.stringify(work_schedule, 4));
+    getSchedule().then(finalCheck);
 } else {
-    // First check if the last day is less than 2 weeks from now
-    var fileData = JSON.parse(fs.readFileSync('./workDays.json', 'utf8'));
-    var lastDay = fileData[fileData.length - 1];
-    var lastDayDate = new Date(lastDay.date);
-    var today = new Date();
-    var diff = Math.abs(today - lastDayDate);
-    var diffDays = Math.ceil(diff / (1000 * 3600 * 24));
-    if (diffDays > 14) {
-        // Time to collect data again
-        collectData().then(uploadScheduleInfo);
-    } else {
-        // No data collection needed, just upload the schedule info if applicable
-        uploadScheduleInfo();
+    try {
+        // First check if the last day is less than 2 weeks from now
+        var fileData = JSON.parse(fs.readFileSync('./workDays.json', 'utf8'));
+        var lastDay = new Date(fileData[fileData.length - 1].date);
+        var now = new Date();
+        var diff = now.getTime() - lastDay.getTime();
+        if (diff < (1.21e+9)) { // if the last day is more than 2 weeks old, get a new schedule
+            getSchedule().then(finalCheck);
+        } else {
+            // Skip data collection to be nice to the server... for now >:)
+            finalCheck();
+        }
+    } catch (err) {
+        console.log(err);
+        finalCheck();
     }
 }
+
+// Check configuration
+if (!process.env.HD_STORE_NUMBER) throw new Error("Missing HD_STORE_NUMBER environment variable");
+if (!process.env.HD_PASSWORD) throw new Error("Missing HD_STORE_PASSWORD environment variable");
+if (!process.env.HD_USERNAME) throw new Error("Missing HD_USERNAME environment variable");
 
 
 
 // Home Depot stuff
+////////////////////////////////////////////////////////////////////////////////
 
-async function collectData() {
+async function getSchedule() {
     puppeteer.launch({
         headless: false,
         // viewport has to be big enough to see the entire page
@@ -64,7 +79,7 @@ async function collectData() {
             width: 1280,
             height: 720
         });
-        await page.goto(destSite);
+        await page.goto(target_webpage);
         var storeNumField = await page.$('#column1content > form > div > table.form > tbody > tr:nth-child(2) > td:nth-child(2) > input[type=text]:nth-child(4)');
         var userField = await page.$("#column1content > form > div > table.form > tbody > tr:nth-child(3) > td:nth-child(2) > input[type=text]")
         var passField = await page.$("#column1content > form > div > table.form > tbody > tr:nth-child(4) > td:nth-child(2) > input[type=password]")
@@ -110,12 +125,20 @@ async function collectData() {
                                     }
                                 }
                             }, cells[j]).then(async data => {
+                                if (!data) return;
                                 // Push the data to the array
+                                let timeStrings = data.timeString.split("-");
+                                if (timeStrings.length < 2) return;
+                                // Normalize the time strings
+                                timeStrings[0].charAt(timeStrings[0].length - 1) === " " ? timeStrings[0] = timeStrings[0].trim() + "m" : null;
+                                timeStrings[0].charAt(0) === " " ? timeStrings[0] = timeStrings[0].substring(1) + "m" : null;
+                                timeStrings[1].charAt(timeStrings[1].length - 1) === " " ? timeStrings[1] = timeStrings[1].trim() + "m" : null;
+                                timeStrings[1].charAt(0) === " " ? timeStrings[1] = timeStrings[1].substring(1) + "m" : null;
                                 if (data) {
-                                    workDays.push({
+                                    work_schedule.push({
                                         date: data.dateString,
-                                        start: data.timeString.split("-")[0],
-                                        end: data.timeString.split("-")[1]
+                                        start: timeStrings[0],
+                                        end: timeStrings[1]
                                     })
                                 }
 
@@ -134,17 +157,18 @@ async function collectData() {
 
         const writeToFile = () => {
             var fileData = JSON.parse(fs.readFileSync('./workDays.json', 'utf8'));
-            workDays.forEach(day => {
+            work_schedule.forEach(day => {
                 // Check if it's already in the array
-                // If its not, add it with "alreadyShared" set to false
-                var found = fileData.find(oldDay => oldDay.date === day.date);
+                // If its not, add it with event_id set to -1
+                // This will be updated later once it's uploaded
+                var found = fileData.find(file => file.date === day.date);
                 if (!found) {
                     console.log("Adding new day: " + day.date)
                     fileData.push({
                         date: day.date,
                         start: day.start,
                         end: day.end,
-                        alreadyShared: false
+                        event_id: -1
                     })
                 }
             });
@@ -161,118 +185,133 @@ async function collectData() {
 }
 
 // Google API stuff
+////////////////////////////////////////////////////////////////////////////////
 
-function uploadScheduleInfo() {
-    console.log("Uploading schedule information to Google Calendar...")
-    // Find all the days that have not been shared yet
-    var fileData = JSON.parse(fs.readFileSync('./workDays.json', 'utf8'));
-    var daysToShare = fileData.filter(day => !day.alreadyShared);
-    // If there are no days to share, exit
-    if (daysToShare.length == 0) {
-        console.log("Google Calendar is up to date!")
-        return;
+// Generate a consent page URL
+function promptForAuth() {
+    const consentUrl = AuthClient.generateAuthUrl({
+        access_type: 'offline',
+        scope: api_scopes
+    });
+    console.log("Visit this page for authorization: " + consentUrl);
+}
+
+// Listen on 8080 for callback to /google/auth with code in query string
+function waitForAuth() {
+    let webserver = http.createServer(function (req, res) {
+        var q = url.parse(req.url, true).query;
+        if (q.code) {
+            AuthClient.getToken(q.code, function (err, authToken) {
+                if (err) {
+                    console.log(err);
+                    res.end("Error getting token");
+                    return;
+                }
+                fs.writeFileSync('./token.json', JSON.stringify(authToken));
+                token = authToken;
+                res.end("It worked! You can close this page now.");
+                finalCheck();
+                webserver.close();
+            });
+        } else {
+            res.end("Something went wrong. Credentials.json is probably outdated.");
+        }
+    }).listen(8080);
+}
+
+// Ensures a token is available and the auth is ready to use
+function finalCheck() {
+    if (!fs.existsSync('./token.json')) {
+        console.log("No token found. Starting consent flow.");
+        promptForAuth();
+        waitForAuth();
+    } else {
+        work_schedule = JSON.parse(fs.readFileSync('./workDays.json', 'utf8'));
+        if (work_schedule.length == 0) {
+            getSchedule();
+        } else {
+            console.log("Starting upload.");
+            token = JSON.parse(fs.readFileSync('./token.json'));
+            startUpload();
+        }
     }
-    // Auth with Google and add the events
-    fs.readFile('credentials.json', (err, content) => {
-        if (err) return console.log('Error loading client secret file:', err);
-        // Get the time zone of the system
-        var timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        // Parse for google
-        let shareQueue = []
-        daysToShare.forEach(day => {
-            let obj = {
-                "summary": "Work",
-                "start": {
-                    "dateTime": day.date + "T" + day.start + ":00-07:00",
-                    "timeZone": timeZone
-                },
-                "end": {
-                    "dateTime": day.date + "T" + day.end + ":00-07:00",
-                    "timeZone": timeZone
+}
+
+function startUpload() {
+    var queue = [];
+
+    AuthClient.setCredentials(token);
+    let fileData = JSON.parse(fs.readFileSync('./workDays.json', 'utf8'));
+
+    // Collect days from workDays.json without an event_id
+    JSON.parse(fs.readFileSync('./workDays.json', 'utf8'))
+        .filter(day => day.event_id === -1)
+        .forEach(obj => queue.push(obj));
+
+    var lastDay;
+    var queueWorker = setInterval(() => {
+        let localTimezoneOffset = new Date().getTimezoneOffset() / 60;
+        let localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        let workDay = queue.shift();
+        var dateString = workDay.date.split("/")[0] + "-" + workDay.date.split("/")[1]
+        let year = new Date().getFullYear();
+        if (workDay.date == "1/1" && lastDay == "12/31") year++;
+
+        if (workDay) {
+
+            /** Google Calendar is very picky.
+            * Using RFC3339 formatting.
+            * 
+            * {
+            *   'summary': 'Google I/O 2015',
+            *   'description': 'A chance to hear more about Google\'s developer products.',
+            *   'start': {
+            *     'dateTime': '2015-05-28T09:00:00-07:00',
+            *     'timeZone': 'America/Los_Angeles',
+            *   },
+            *   'end': {
+            *     'dateTime': '2015-05-28T17:00:00-07:00',
+            *     'timeZone': 'America/Los_Angeles',
+            *   }
+            * }
+            * 
+            */
+
+            let startTime = moment(workDay.start, "h:mm a").format("HH:mm:ss");
+            let endTime = moment(workDay.end, "h:mm a").format("HH:mm:ss");
+
+            calendar.events.insert({
+                auth: AuthClient,
+                calendarId: 'primary',
+                resource: {
+                    summary: "Shift",
+                    description: "Work schedule for " + workDay.date,
+                    // Dont bother using the Date constructor, Google hates it
+                    start: {
+                        dateTime: year + "-" + dateString + "T" + startTime,
+                        timeZone: localTimezone
+                    },
+                    end: {
+                        dateTime: year + "-" + dateString + "T" + endTime,
+                        timeZone: localTimezone
+                    }
                 }
             }
-            shareQueue.push(obj)
-        })
-
-        // Authorize a client with credentials, then call the Google Calendar API.
-        authorize(JSON.parse(content), (auth) => {
-            // Fetch the list of calendars to see if it's already there
-            var calendar = google.calendar({ version: 'v3', auth });
-
-
-            google.calendar({ version: 'v3', auth }).events.insert({
-                auth: auth,
-                calendarId: 'primary',
-                resource: shareQueue
-            }, (err, res) => {
-                if (err) return console.log('The API returned an error: ' + err);
-                console.log("Successfully added events to Google Calendar!")
-                // Mark all the days as shared
-                daysToShare.forEach(day => {
-                    var index = fileData.findIndex(oldDay => oldDay.date === day.date);
-                    fileData[index].alreadyShared = true;
-                })
-                fs.writeFileSync('./workDays.json', JSON.stringify(fileData, 4));
-            });
-        });
-
-
-    });
-}
-
-/**
- * Create an OAuth2 client with the given credentials, and then execute the
- * given callback function.
- * @param {Object} credentials The authorization client credentials.
- * @param {function} callback The callback to call with the authorized client.
- */
-function authorize(credentials, callback) {
-    const { client_secret, client_id, redirect_uris } = credentials.installed;
-    const oAuth2Client = new google.auth.OAuth2(
-        client_id, client_secret, redirect_uris[0]);
-
-    // Check if we have previously stored a token.
-    fs.readFile(TOKEN_PATH, (err, token) => {
-        if (err) return getAccessToken(oAuth2Client, callback);
-        oAuth2Client.setCredentials(JSON.parse(token));
-        callback(oAuth2Client);
-    });
-}
-
-/**
- * Get and store new token after prompting for user authorization, and then
- * execute the given callback with the authorized OAuth2 client.
- * @param {google.auth.OAuth2} oAuth2Client The OAuth2 client to get token for.
- * @param {getEventsCallback} callback The callback for the authorized client.
- */
-function getAccessToken(oAuth2Client, callback) {
-    const authUrl = oAuth2Client.generateAuthUrl({
-        access_type: 'offline',
-        scope: SCOPES,
-    });
-    console.log('Authorize this app by visiting this url:', authUrl);
-    // Create a http server to listen for the callback and capture the code
-    var server = http.createServer().listen('8080');
-    server.on('request', function (req, res) {
-        let parsed = url.parse(req.url, true);
-        var code = parsed.query.code;
-        if (!code) return;
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end('<html><head><title>Callback</title></head><body>Authentication complete</body></html>');
-        console.log("Authentication complete\nRetrieving access token...");
-        oAuth2Client.getToken(code).then((res) => {
-            if (res.err) return console.error('Error retrieving access token', res.err);
-            oAuth2Client.setCredentials(res.tokens.access_token);
-            // Store the token to disk for later program executions
-            fs.writeFile(TOKEN_PATH, JSON.stringify(res.tokens.access_token), (err) => {
-                if (err) return console.error(err);
-                console.log('Token stored to', TOKEN_PATH);
-                server.close();
-                server.once('close', () => {
-                    callback(oAuth2Client);
+                , (err, event) => {
+                    if (err) {
+                        console.log(err);
+                        throw err
+                    }
+                    console.log("Event created: " + event);
+                    // Update the event_id in the workDays.json file
+                    fileData.find(day => day.date === workDay.date).event_id = event.id;
+                    fs.writeFileSync('./workDays.json', JSON.stringify(fileData, 4));
                 });
-            });
-        })
-    });
-    console.log("Waiting for authentication...")
+            lastDay = workDay;
+        } else {
+            console.log("All entries uploaded!");
+            console.log("Check your new calendar at: https://calendar.google.com/")
+            clearInterval(queueWorker);
+        }
+    }, 1200);
 }
