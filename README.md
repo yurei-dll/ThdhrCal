@@ -6,12 +6,13 @@ This script will check [Kronos](www.mythdhr.com) every so often, and import the 
 
 ## Variables
 Make a [.env](https://www.npmjs.com/package/dotenv) file to configure your login info:
-- HD_STORE_NUMBER
-- HD_USERNAME
-- HD_PASSWORD
+- `HD_STORE_NUMBER`
+- `HD_USERNAME`
+- `HD_PASSWORD`
 
 ## Google API
-Google API info goes in a file named "credentials.json" - see [Google Workspace](https://developers.google.com/workspace/guides/create-credentials) for more info. After user consent, the client key will be saved in "token.json" for future use. Authentication with Google can be a little tricky, so [here's](https://developers.google.com/identity/protocols/oauth2) a guide for those who need it.
+Google API info goes in a file named "credentials.json" - see [Google Workspace](https://developers.google.com/workspace/guides/create-credentials) for more info. After user consent, the client key will be saved in "token.json" for future use. Authentication with Google can be a little tricky, so [here's](https://developers.google.com/identity/protocols/oauth2) a guide for those who want it.
 
-Required scopes:
-*TBD*
+The schedule itself will be put on whatever calendar is called "Work Schedule" and one will be created if it's not already there. Since events are created on the user's behalf, the only required scopes are:
+- `./auth/calendar`
+- `./auth/calendar.calendarlist`
