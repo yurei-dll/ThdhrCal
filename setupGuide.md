@@ -29,6 +29,7 @@ Google's Cloud Console can be a little overwhelming sometimes, so I created a wa
 10) Moving back to the webpage, return to the APIs and Services page by following the link. Now go into the `OAuth consent screen` section.
 
 ![](https://github.com/yureiTxt/ThdhrCal/blob/master/docs/navigate_back.png?raw=true)
+
 ![](https://github.com/yureiTxt/ThdhrCal/blob/master/docs/goto_consent_screen.png?raw=true)
 
 11) From here on it's pretty simple.
@@ -43,4 +44,4 @@ Google's Cloud Console can be a little overwhelming sometimes, so I created a wa
 
 ---
 
-And you're done! Start the project with `node main.js`. The first time will generate a user consent page via Google and save the schedule information. Run it again to have it uploaded to your calendar.
+Remember to save your changes, and you're done! Start the project with `node main.js`. The first time will generate a user consent page via Google and save the schedule information. Run it again to have it uploaded to your calendar.
